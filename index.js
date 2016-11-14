@@ -1,4 +1,3 @@
-const Nbrite = require('nbrite');
 const express = require('express');
 const fetch = require('node-fetch');
 const cors = require('cors');
@@ -7,9 +6,12 @@ const rp = require('request-promise');
 const token = process.env.EVENTBRITE_TOKEN;
 const organizer = process.env.ORGANIZER_TOKEN;
 
-console.log(`Starting lottery for ${organizer} with token ${token}`);
+const cache = {
+  eventId: null,
+  attendees: []
+}
 
-const nbrite = new Nbrite({'token': token});
+console.log(`Starting lottery for ${organizer} with token ${token}`);
 
 const range = (start, end) => {
   let pages = []
@@ -52,6 +54,21 @@ const errorRequest = (res, status, error) => {
   res.json(error);
 }
 
+const fetchCache = () => {
+  get(`https://www.eventbriteapi.com/v3/events/search/?sort_by=date&organizer.id=${organizer}&token=${token}`)
+    .then(data => {
+      if (data.events.length < 1) {
+        return Promise.reject(new Error("No event available"))
+      }
+      cache.eventId = data.events[0].id
+      return cache.eventId
+    })
+    .then(event_id => getAttendees(event_id))
+    .then(attendees => cache.attendees = attendees)
+    .catch(error => cache.eventId = null)
+    .then(_ => setTimeout(fetchCache, 60000));
+}
+
 const app = express();
 
 app.use(cors());
@@ -64,17 +81,14 @@ app.get('/winners', function(req, res){
   } else if (nb_winner == 0) {
     res.json([])
   } else {
-    console.log(`Generating ${nb_winner} winners for event`)
-    get(`https://www.eventbriteapi.com/v3/events/search/?sort_by=date&organizer.id=${organizer}&token=${token}`)
-      .then(data => {
-        if (data.events.length < 1) {
-          return Promise.reject(new Error("No event available"))
-        }
-        return data.events[0].id
-      })
-      .catch(error => errorRequest(res, 503, error))
-      .then(event_id => getAttendees(event_id))
-      .then(attendees => getRandomIds(attendees.length, nb_winner).map((index) => attendees[index]))
+    console.log(`Generating ${nb_winner} winners`)
+    new Promise((success, reject) => {
+      if (cache.eventId == null) {
+        reject(new Error("No event available"))
+      } else {
+        success(cache.attendees)
+      }
+    }).then(attendees => getRandomIds(attendees.length, nb_winner).map((index) => attendees[index]))
       .then(winners => {console.log("Found winners"); return winners})
       .then(winners => winners.map(({profile: {first_name: first_name, last_name: last_name}}) => { return {first_name: first_name, last_name: last_name}}))
       .then(winners => res.json(winners))
@@ -82,4 +96,8 @@ app.get('/winners', function(req, res){
   }
 });
 
+console.log("Start cache warmup")
+fetchCache()
+
+console.log("Start web server")
 app.listen(3000);
