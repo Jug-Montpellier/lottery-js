@@ -66,7 +66,7 @@ const fetchCache = () => {
     .then(event_id => getAttendees(event_id))
     .then(attendees => cache.attendees = attendees)
     .catch(error => cache.eventId = null)
-    .then(_ => setTimeout(fetchCache, 60000));
+    .then(_ => setTimeout(fetchCache, 3600000));
 }
 
 const app = express();
